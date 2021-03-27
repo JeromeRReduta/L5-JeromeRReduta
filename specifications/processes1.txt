@@ -1,0 +1,7 @@
+# Process Name, Creation Quantum, Workload Size, Priority
+# For this round of execution, three processes are run at quantums 1, 2, and 3.
+# Each of the processes has the same workload size and priority.
+Process_A, 0, 4, 60
+Process_B, 1, 1, 20
+Process_C, 4, 4, 40
+Process_D, 2, 2, 100
