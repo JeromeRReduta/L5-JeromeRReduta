@@ -11,10 +11,13 @@
 #include <time.h>
 #include <unistd.h>
 #include <limits.h>
+#include <math.h>
 
 #include "file_format.h"
 
 static int rr_current_i = 0;
+
+
 int circ_array_go_back_by(int i, int n, int max_len);
 int circ_array_go_forward_by(int i, int n, int max_len);
 int spin(int n, int len);
@@ -294,10 +297,6 @@ void sjf(struct scheduler_state *sched_state)
 
 void rr(struct scheduler_state *sched_state)
 {
-    printf("\nUsing round robin\n");
-
-   
-
     struct process_ctl_block* current = NULL;
 
     for (int i = 0; i < sched_state->num_processes + 1; ++i) {
@@ -306,7 +305,6 @@ void rr(struct scheduler_state *sched_state)
 
         struct process_ctl_block *pcb = &sched_state->pcbs[index];
 
-        printf("%s -> %s\n", (&sched_state->pcbs[index])->name, pcb->name);
         if(pcb->state == WAITING) {
             current = pcb;
 
@@ -319,30 +317,46 @@ void rr(struct scheduler_state *sched_state)
 
 void priority(struct scheduler_state *sched_state)
 {
-    struct process_ctl_block* curr = &sched_state->pcbs[rr_current_i];
+    static struct process_ctl_block* priority_current;
+
+    if (priority_current != NULL && priority_current->state == TERMINATED) {
+        priority_current = NULL;
+    }
     unsigned int max_priority = 0;
     int i;
     for (i = 0; i < sched_state->num_processes; ++i) {
-        int index = circ_array_go_forward_by(rr_current_i, i + 1, sched_state->num_processes);
+        int index = circ_array_go_forward_by(rr_current_i, i, sched_state->num_processes);
 
         struct process_ctl_block *pcb = &sched_state->pcbs[index];
-        if(pcb->state == WAITING && pcb->priority > max_priority && index != rr_current_i) {
+        if(pcb->state == WAITING && pcb->priority >= max_priority) {
+            
+            // Case: priority_current == NULL
+            if (priority_current == NULL) {
+
+                priority_current = pcb;
+                max_priority = pcb->priority;
+                rr_current_i = index;
+
+            }
+            // Case: priority_current is not NULL, but new pcb has higher prio
+            else if (pcb->priority >= max_priority){
+                priority_current = pcb;
+                max_priority = pcb->priority;
+                rr_current_i = index;
+            }
 
 
-            printf("OLD PRIO: %d\n NEW PRIO: %d\n", max_priority, pcb->priority);
+
             max_priority = pcb->priority;
-            curr = pcb;
 
             rr_current_i = index;
 
         }
     }
 
-    if (curr != NULL && curr->state == WAITING) {
+    if (priority_current != NULL) {
 
-        printf("Name is: '%s'\n", curr->name);
-        printf("New prio is: %d\n", curr->priority);
-        context_switch(curr);
+        context_switch(priority_current);
         return;
     }
 
@@ -350,28 +364,29 @@ void priority(struct scheduler_state *sched_state)
 
 void insanity(struct scheduler_state *sched_state)
 {
-    struct process_ctl_block* curr;
-    bool all_done = true;
+    // Keep track of  first process ctl block and first quantum
+    struct process_ctl_block *first = NULL;
 
-    for (int i = 0; i < sched_state->num_processes; ++i) {
-        struct process_ctl_block* pcb = &sched_state->pcbs[i];
+    int i = circ_array_go_forward_by(0, rand(), sched_state->num_processes);
+    int counter = 0;
+    while (counter < sched_state->num_processes)
+    {
+        struct process_ctl_block *pcb = &sched_state->pcbs[i];
 
         if (pcb->state == WAITING) {
-            all_done = false;
+            first = pcb;
         }
 
-    }
-
-    if (!all_done) {
-
-        do {
-            curr = &sched_state->pcbs[spin(10, sched_state->num_processes)];
-        }
-        while (curr->state != WAITING);
-        context_switch(curr);
-        return;
+        i = circ_array_go_forward_by(i, 1, sched_state->num_processes);
+        counter++;
     }
     
+    if (first != NULL) {
+        context_switch(first);
+        return;
+    }
+
+
 
 }
 
@@ -381,11 +396,14 @@ int spin(int n, int len)
 
     // Spin 10 times for fun!
     for (int i = 0; i < n; i++) {
-        chosen_index = circ_array_go_forward_by(0, rand(), len);
+        chosen_index = circ_array_go_forward_by(0, abs(rand()), len);
     }
+
+    printf("chosen index is %d\n", chosen_index);
 
     return chosen_index;
 }
+
 
 // The following circ_array funcs have been lovingly taken from my P2 code
 /**
@@ -419,25 +437,119 @@ int circ_array_go_forward_by(int i, int n, int max_len)
 
 }
 
+void set_scheduling_algorithm(char *algorithm_str)
+{
+
+    printf("algorithm_str is '%s'\n", algorithm_str);
+
+    if (strcmp(algorithm_str, "basic") == 0) {
+        printf("basic algo\n");
+        g_scheduling_algorithm = &basic;
+    }
+    else if (strcmp(algorithm_str, "fifo") == 0) {
+        printf("fifo algo\n");
+        g_scheduling_algorithm = &fifo;
+    }
+    else if (strcmp(algorithm_str, "psjf") == 0) {
+        g_scheduling_algorithm = &psjf;
+        printf("psjf algo\n");
+    }
+    else if (strcmp(algorithm_str, "sjf") == 0) {
+        printf("sjf algo\n");
+        g_scheduling_algorithm = &sjf;
+    }
+    else if (strcmp(algorithm_str, "rr") == 0) {
+        printf("rr algo\n");
+        g_scheduling_algorithm = &rr;
+    }
+    else if (strcmp(algorithm_str, "priority") == 0) {
+        printf("priority algo\n");
+        g_scheduling_algorithm = &priority;
+    }
+    else {
+        printf("Oh no :D\n");
+        g_scheduling_algorithm = &insanity;
+    }
+        
+    
+
+}
+
+// Thanks Prof. for this func
+int compare(const void *thing1, const void *thing2)
+{
+    const struct process_ctl_block *block_1 = thing1;
+    const struct process_ctl_block *block_2 = thing2;
+
+    return block_1->completion_time > block_2->completion_time;
+}
+
+void print_summary(char *algorithm_str)
+{
+    printf("\nExecution complete. Here is your summary with the algorithm: '%s':\n", algorithm_str);
+    qsort(g_scheduler.pcbs, g_scheduler.num_processes, sizeof(struct process_ctl_block), compare);
+    
+    printf("TURNAROUND TIME\n");
+
+    double total_turnaround_time = 0;
+    for (int i = 0; i < g_scheduler.num_processes; i++) {
+        struct process_ctl_block current  = g_scheduler.pcbs[i];
+        double turnaround_time = current.completion_time - current.arrival_time;
+        total_turnaround_time += turnaround_time;
+        printf("'%s': %f\n", current .name, turnaround_time);
+    }
+    printf("Average turnaround time: %f\n", total_turnaround_time / g_scheduler.num_processes);
+    printf("\n\n");
+
+    printf("RESPONSE TIME\n");
+
+    double total_response_time = 0;
+    for (int i = 0; i < g_scheduler.num_processes; i++) {
+        struct process_ctl_block current  = g_scheduler.pcbs[i];
+        double turnaround_time = current.start_time - current.arrival_time;
+        total_response_time += turnaround_time;
+        printf("'%s': %f\n", current .name, turnaround_time);
+
+    }
+    printf("Average response time: %f\n", total_response_time / g_scheduler.num_processes);
+    printf("\n\n");
+
+
+    printf("ORDER COMPLETED\n");
+
+
+
+    for (int i = 0; i < g_scheduler.num_processes; i++) {
+        printf("%d) '%s'\n", i, g_scheduler.pcbs[i].name);
+    }
+
+    printf("\n\n");
+
+}
 
 
 
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2) {
-        printf("Usage: %s <process-specification>\n", argv[0]);
+    if (argc != 3) {
+        printf("Usage: %s <algorithm_name> <process-specification>\n", argv[0]);
         return 1;
     }
 
-    read_spec(argv[1], &g_scheduler);
+    read_spec(argv[2], &g_scheduler);
 
     /* Set up our interrupt. Instead of a hardware interrupt, we'll be using
      * signals, a type of software interrupt. It will fire every 1 second. */
     signal(SIGALRM, signal_handler);
     signal(SIGCHLD, signal_handler);
 
-    g_scheduling_algorithm = &insanity;
+    char* algorithm_str = argv[1];
+
+    set_scheduling_algorithm(algorithm_str);
+
+
+
     fprintf(stderr, "[i] Ready to start\n");
 
     while (true) {
@@ -460,6 +572,9 @@ int main(int argc, char *argv[])
         pause();
     }
 
-    printf("\nExecution complete.\n");
+    print_summary(algorithm_str);
+    
+
+
     return 0;
 }
