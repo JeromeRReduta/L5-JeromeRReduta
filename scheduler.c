@@ -10,8 +10,15 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <limits.h>
 
 #include "file_format.h"
+
+static int rr_current_i = 0;
+int circ_array_go_back_by(int i, int n, int max_len);
+int circ_array_go_forward_by(int i, int n, int max_len);
+int spin(int n, int len);
+
 
 /* Scheduler state information */
 struct scheduler_state g_scheduler = { 0 };
@@ -195,6 +202,227 @@ void basic(struct scheduler_state *sched_state)
     }
 }
 
+
+void fifo(struct scheduler_state *sched_state)
+{
+    // Keep track of  first process ctl block and first quantum
+    struct process_ctl_block *first = NULL;
+    int first_quantum = INT_MAX;
+
+    int i;
+    for (i = 0; i < sched_state->num_processes; ++i) {
+        struct process_ctl_block *pcb = &sched_state->pcbs[i];
+        if(pcb->state == WAITING && pcb->creation_quantum < first_quantum) {
+            first = pcb;
+            first_quantum = pcb->creation_quantum;
+        }
+    }
+
+    if (first != NULL) {
+        context_switch(first);
+        return;
+    }
+
+
+}
+
+/**
+ * @brief      Scheduling algorithm that prioritizes the process with the shortest workload
+ *
+ * @param      sched_state  sched state array
+ */
+void psjf(struct scheduler_state *sched_state)
+{
+    printf("\nUsing psjf\n");
+    struct process_ctl_block *smallest = NULL;
+    unsigned int smallest_workload = UINT_MAX;
+
+    int i;
+    for (i = 0; i < sched_state->num_processes; ++i) {
+        struct process_ctl_block *pcb = &sched_state->pcbs[i];
+        if(pcb->state == WAITING && pcb->workload < smallest_workload) {
+            smallest = pcb;
+            smallest_workload = pcb->workload;
+
+/**
+            printf("NEW STUFF:\n"
+                "\t->smallest is: '%s'\n"
+                "\t->smallest_workload is: '%i'\n"
+                "\t->finish - start = %f\n",
+                smallest == NULL ? "null" : "exists", smallest_workload, get_time() - start_time);
+   */     
+        }
+    }
+
+    if (smallest != NULL) {
+        context_switch(smallest);
+        return;
+    }
+
+
+
+}
+
+void sjf(struct scheduler_state *sched_state)
+{
+    printf("\nUsing sjf\n");
+    static struct process_ctl_block *current; 
+    unsigned int smallest_workload = UINT_MAX;
+
+    if (current != NULL && current->state == TERMINATED) {
+        printf("'%s' is done\n", current->name);
+        current = NULL;
+    }
+
+    int i;
+    for (i = 0; i < sched_state->num_processes; ++i) {
+        struct process_ctl_block *pcb = &sched_state->pcbs[i];
+        if(pcb->state == WAITING && pcb->workload < smallest_workload && current == NULL) {
+            current = pcb;
+            smallest_workload = pcb->workload;
+        }
+    }
+
+    if (current != NULL) {
+        context_switch(current);
+        return;
+    }
+
+
+
+}
+
+void rr(struct scheduler_state *sched_state)
+{
+    printf("\nUsing round robin\n");
+
+   
+
+    struct process_ctl_block* current = NULL;
+
+    for (int i = 0; i < sched_state->num_processes + 1; ++i) {
+
+        int index = circ_array_go_forward_by(rr_current_i, i + 1, sched_state->num_processes);
+
+        struct process_ctl_block *pcb = &sched_state->pcbs[index];
+
+        printf("%s -> %s\n", (&sched_state->pcbs[index])->name, pcb->name);
+        if(pcb->state == WAITING) {
+            current = pcb;
+
+            rr_current_i = index;
+            context_switch(current);
+            return;
+        }
+    }
+}
+
+void priority(struct scheduler_state *sched_state)
+{
+    struct process_ctl_block* curr = &sched_state->pcbs[rr_current_i];
+    unsigned int max_priority = 0;
+    int i;
+    for (i = 0; i < sched_state->num_processes; ++i) {
+        int index = circ_array_go_forward_by(rr_current_i, i + 1, sched_state->num_processes);
+
+        struct process_ctl_block *pcb = &sched_state->pcbs[index];
+        if(pcb->state == WAITING && pcb->priority > max_priority && index != rr_current_i) {
+
+
+            printf("OLD PRIO: %d\n NEW PRIO: %d\n", max_priority, pcb->priority);
+            max_priority = pcb->priority;
+            curr = pcb;
+
+            rr_current_i = index;
+
+        }
+    }
+
+    if (curr != NULL && curr->state == WAITING) {
+
+        printf("Name is: '%s'\n", curr->name);
+        printf("New prio is: %d\n", curr->priority);
+        context_switch(curr);
+        return;
+    }
+
+}
+
+void insanity(struct scheduler_state *sched_state)
+{
+    struct process_ctl_block* curr;
+    bool all_done = true;
+
+    for (int i = 0; i < sched_state->num_processes; ++i) {
+        struct process_ctl_block* pcb = &sched_state->pcbs[i];
+
+        if (pcb->state == WAITING) {
+            all_done = false;
+        }
+
+    }
+
+    if (!all_done) {
+
+        do {
+            curr = &sched_state->pcbs[spin(10, sched_state->num_processes)];
+        }
+        while (curr->state != WAITING);
+        context_switch(curr);
+        return;
+    }
+    
+
+}
+
+int spin(int n, int len)
+{
+    int chosen_index = 0;
+
+    // Spin 10 times for fun!
+    for (int i = 0; i < n; i++) {
+        chosen_index = circ_array_go_forward_by(0, rand(), len);
+    }
+
+    return chosen_index;
+}
+
+// The following circ_array funcs have been lovingly taken from my P2 code
+/**
+ * @brief      Returns the index from going n indices backward in a circular array
+ *
+ * @param[in]  i        Starting index
+ * @param[in]  n        # of indices to go backward
+ * @param[in]  max_len  max length of circular array
+ *
+ * @return     Index from going n indices backward from index i
+ */
+
+int circ_array_go_back_by(int i, int n, int max_len)
+{
+    return abs((100 + i - n) % max_len);
+
+}
+
+/**
+ * @brief      Returns the index from going n indices forward in a circular array
+ *
+ * @param[in]  i        Starting index
+ * @param[in]  n        # of indices to go foward
+ * @param[in]  max_len  max length of circular array
+ *
+ * @return     Index from going n indices forward from index i
+ */
+int circ_array_go_forward_by(int i, int n, int max_len)
+{
+    return abs((100 + i + n) % max_len);
+
+}
+
+
+
+
+
 int main(int argc, char *argv[])
 {
     if (argc != 2) {
@@ -209,7 +437,7 @@ int main(int argc, char *argv[])
     signal(SIGALRM, signal_handler);
     signal(SIGCHLD, signal_handler);
 
-    g_scheduling_algorithm = &basic;
+    g_scheduling_algorithm = &insanity;
     fprintf(stderr, "[i] Ready to start\n");
 
     while (true) {
